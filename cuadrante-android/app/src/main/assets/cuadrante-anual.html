@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cuadrante Anual Laboral</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+    select option { background: #fff; color: #1E293B; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useEffect } = React;
+
+
+const TIPOS = [
+  { id: "jornada",    label: "Jornada",           emoji: "💼", color: "#DC2626", bg: "#FEF2F2", text: "#991B1B", border: "#FECACA" },
+  { id: "vacaciones", label: "Vacaciones",         emoji: "🏖️", color: "#CA8A04", bg: "#FEFCE8", text: "#713F12", border: "#FDE047", diaCompleto: true },
+  { id: "asuntos",    label: "Asuntos propios",    emoji: "📋", color: "#7C3AED", bg: "#F5F3FF", text: "#4C1D95", border: "#DDD6FE" },
+  { id: "excesos",    label: "Excesos",            emoji: "⏱️", color: "#0891B2", bg: "#ECFEFF", text: "#164E63", border: "#A5F3FC" },
+  { id: "sindical",   label: "Días Sindicales",    emoji: "✊", color: "#9333EA", bg: "#FAF5FF", text: "#581C87", border: "#E9D5FF" },
+  { id: "guardia",    label: "Guardia",            emoji: "🛡️", color: "#D97706", bg: "#FFFBEB", text: "#92400E", border: "#FDE68A" },
+  { id: "refuerzo",   label: "Refuerzo",           emoji: "⚡", color: "#B45309", bg: "#FEF3C7", text: "#78350F", border: "#FDE68A" },
+  { id: "permiso",    label: "Permiso",            emoji: "📝", color: "#DB2777", bg: "#FDF2F8", text: "#9D174D", border: "#FBCFE8" },
+  { id: "baja",       label: "Baja médica",        emoji: "🏥", color: "#EA580C", bg: "#FFF7ED", text: "#9A3412", border: "#FED7AA" },
+  { id: "festivo",    label: "Festivo",            emoji: "🎉", color: "#0891B2", bg: "#ECFEFF", text: "#164E63", border: "#A5F3FC" },
+  { id: "libre",      label: "Libre / Descanso",   emoji: "☕", color: "#16A34A", bg: "#F0FDF4", text: "#14532D", border: "#86EFAC" },
+];
+
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const DIAS_LABEL = ["L","M","X","J","V","S","D"];
+const DIAS_FULL = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"];
+const JORNADAS_POR_DIA = 3;
+const OBJETIVO_JORNADAS = 192;
+const ASUNTOS_TOTAL = 8;
+const SINDICAL_MAX_MES = 20;
+
+function getDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function getFirstDay(y, m) { const d = new Date(y, m, 1).getDay(); return d === 0 ? 6 : d - 1; }
+function getTotalHours(d) { return Object.values(d || {}).reduce((a, b) => a + b, 0); }
+function toDateKey(y, m, d) { return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+function parseKey(dk) { const [y,m,d] = dk.split("-").map(Number); return { y, m: m-1, d }; }
+function formatDate(dk) { const { m, d } = parseKey(dk); return `${d} ${MESES_CORTO[m]}`; }
+function getWeekStart(date) {
+  const d = new Date(date);
+  const dow = d.getDay() === 0 ? 6 : d.getDay() - 1;
+  d.setDate(d.getDate() - dow);
+  return d;
+}
+function todayKey() {
+  const t = new Date();
+  return toDateKey(t.getFullYear(), t.getMonth(), t.getDate());
+}
+
+function applyPattern(year, sm, sd, cycle) {
+  const res = {}, resMeta = {};
+  let cur = new Date(year, sm, sd), pos = 0;
+  const end = new Date(year, 11, 31);
+  while (cur <= end) {
+    const dk = toDateKey(year, cur.getMonth(), cur.getDate());
+    if (cycle[pos % cycle.length] === "jornada") { res[dk] = { jornada: 24 }; resMeta[dk] = { jornada_completa: true }; }
+    else { res[dk] = { libre: 24 }; resMeta[dk] = {}; }
+    pos++; cur.setDate(cur.getDate() + 1);
+  }
+  return { newSelected: res, newMeta: resMeta };
+}
+
+const card = { background: "#FFFFFF", borderRadius: 16, border: "1px solid #E2E8F0", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" };
+const selectStyle = { background: "#F8FAFC", border: "1px solid #CBD5E1", borderRadius: 10, padding: "9px 12px", color: "#1E293B", fontSize: 13, fontWeight: 600, outline: "none", cursor: "pointer", appearance: "none", WebkitAppearance: "none", width: "100%" };
+function SelectWrap({ children }) { return <div style={{ position: "relative" }}>{children}<div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "#94A3B8", pointerEvents: "none", fontSize: 10 }}>▼</div></div>; }
+const cBtn = (color, active) => ({ width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${active ? color : "#E2E8F0"}`, background: active ? `${color}18` : "#F8FAFC", color: active ? color : "#CBD5E1", cursor: active ? "pointer" : "not-allowed", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" });
+
+// ── Today Banner ──────────────────────────────────────────────────────────
+function TodayBanner({ selected, meta }) {
+  const [blink, setBlink] = useState(true);
+  useEffect(() => {
+    const t = setInterval(() => setBlink(b => !b), 700);
+    return () => clearInterval(t);
+  }, []);
+
+  const today = new Date();
+  const todayDk = toDateKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const weekStart = getWeekStart(today);
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart); d.setDate(d.getDate() + i);
+    return { d, dk: toDateKey(d.getFullYear(), d.getMonth(), d.getDate()), dow: i };
+  });
+
+  return (
+    <div style={{ ...card, padding: "12px 16px", marginBottom: 14, maxWidth: 1100, margin: "0 auto 14px", background: "linear-gradient(135deg,#EFF6FF,#F5F3FF)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#2563EB", letterSpacing: 2, textTransform: "uppercase" }}>
+          📅 Semana actual — {weekDays[0].d.getDate()} {MESES_CORTO[weekDays[0].d.getMonth()]} al {weekDays[6].d.getDate()} {MESES_CORTO[weekDays[6].d.getMonth()]} {weekDays[6].d.getFullYear()}
+        </span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+        {weekDays.map(({ d, dk, dow }) => {
+          const isToday = dk === todayDk;
+          const dayData = selected[dk] || {};
+          const tipos = Object.keys(dayData).filter(id => dayData[id] > 0);
+          const tiposVisibles = tipos.filter(id => id !== "libre");
+          const mainTipo = tiposVisibles.length === 1 ? TIPOS.find(t => t.id === tiposVisibles[0]) : null;
+          const isWeekend = dow >= 5;
+          const todayBg = blink ? "#2563EB" : "#EFF6FF";
+          const todayTextColor = blink ? "#fff" : "#2563EB";
+          return (
+            <div key={dk} style={{ borderRadius: 12, border: `2px solid ${isToday ? "#2563EB" : mainTipo ? mainTipo.border : "#E2E8F0"}`, background: isToday ? todayBg : mainTipo ? mainTipo.bg : isWeekend ? "#F8FAFC" : "#fff", padding: "8px 6px", textAlign: "center", transition: "background 0.15s, color 0.15s", boxShadow: isToday ? "0 0 14px rgba(37,99,235,0.4)" : "none" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: isToday ? todayTextColor : isWeekend ? "#CBD5E1" : "#94A3B8", marginBottom: 2 }}>{DIAS_LABEL[dow]}</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: isToday ? todayTextColor : mainTipo ? mainTipo.text : isWeekend ? "#CBD5E1" : "#475569" }}>{d.getDate()}</div>
+              {tipos.length > 0 && (
+                <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                  {tipos.map(id => {
+                    const t = TIPOS.find(x => x.id === id);
+                    return <span key={id} style={{ fontSize: 8, background: isToday ? "rgba(255,255,255,0.25)" : t?.bg, border: `1px solid ${isToday ? "rgba(255,255,255,0.4)" : t?.border}`, borderRadius: 4, padding: "1px 4px", color: isToday ? todayTextColor : t?.text, fontWeight: 700 }}>{t?.emoji} {dayData[id]}h</span>;
+                  })}
+                </div>
+              )}
+              {isToday && <div style={{ fontSize: 8, color: todayTextColor, fontWeight: 800, marginTop: 3 }}>HOY</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Day Cell ──────────────────────────────────────────────────────────────
+function DayCell({ day, dk, dayData, dayMeta, isWeekend, onClick, size = "small", isToday = false, blink = false }) {
+  const totalH = getTotalHours(dayData);
+  const tipos = Object.keys(dayData).filter(id => dayData[id] > 0);
+  const mainTipo = tipos.length === 1 ? TIPOS.find(t => t.id === tipos[0]) : null;
+  const isJornadaCompleta = dayMeta?.jornada_completa === true;
+  const hasData = totalH > 0;
+  const isSmall = size === "small";
+
+  return (
+    <button onClick={onClick}
+      style={{ width: "100%", aspectRatio: isSmall ? "1" : "auto", minHeight: isSmall ? undefined : 56, borderRadius: isSmall ? 5 : 10, border: `${isSmall ? 1.5 : 2}px solid ${isToday ? "#2563EB" : hasData ? (mainTipo?.border || "#E2E8F0") : "transparent"}`, background: isToday ? (blink ? "#EFF6FF" : "#F0F9FF") : mainTipo ? mainTipo.bg : isWeekend ? "#F8FAFC" : "#fff", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: isSmall ? "center" : "flex-start", justifyContent: isSmall ? "center" : "flex-start", padding: isSmall ? "1px" : "6px 8px", position: "relative", transition: "transform 0.1s", boxShadow: isToday ? "0 0 10px rgba(37,99,235,0.2)" : hasData ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}
+      onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.06)"; e.currentTarget.style.zIndex = 10; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.zIndex = 1; }}
+    >
+      <span style={{ fontSize: isSmall ? 9 : 13, fontWeight: isToday ? 900 : hasData ? 800 : 400, color: isToday ? "#2563EB" : mainTipo ? mainTipo.text : isWeekend ? "#CBD5E1" : "#475569", lineHeight: 1 }}>{day}</span>
+      {isToday && isSmall && <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#2563EB", marginTop: 2 }} />}
+      {hasData && isSmall && !isToday && (() => {
+        const hasJornada = (dayData.jornada || 0) > 0;
+        const otrosIds = tipos.filter(id => id !== "jornada" && id !== "libre");
+        return (
+          <>
+            {hasJornada && (
+              <div style={{ width: "70%", height: 2.5, borderRadius: 2, background: "#DC2626", marginTop: 2 }} />
+            )}
+            {otrosIds.length > 0 && (
+              <div style={{ display: "flex", width: "70%", height: 2.5, borderRadius: 2, overflow: "hidden", marginTop: 1 }}>
+                {otrosIds.map(id => { const t = TIPOS.find(x => x.id === id); return <div key={id} style={{ flex: dayData[id], background: t?.color || "#888" }} />; })}
+              </div>
+            )}
+            {!hasJornada && otrosIds.length === 0 && tipos.filter(id => id !== "libre").map(id => {
+              const t = TIPOS.find(x => x.id === id);
+              return <div key={id} style={{ width: "70%", height: 2.5, borderRadius: 2, background: t?.color, marginTop: 2 }} />;
+            })}
+          </>
+        );
+      })()}
+      {hasData && !isSmall && (
+        <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 2 }}>
+          {tipos.map(id => {
+            const t = TIPOS.find(x => x.id === id);
+            return <span key={id} style={{ background: t?.bg, border: `1px solid ${t?.border}`, borderRadius: 4, padding: "1px 5px", fontSize: 9, color: t?.text, fontWeight: 700 }}>{t?.emoji} {id === "jornada" && isJornadaCompleta ? "24h" : `${dayData[id]}h`}</span>;
+          })}
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ── Vacation Modal ────────────────────────────────────────────────────────
+function VacacionesModal({ year, selected, onClose, onApply }) {
+  const [ranges, setRanges] = useState([{ sm: 0, sd: 1, em: 0, ed: 7 }]);
+  const addRange = () => setRanges(r => [...r, { sm: 0, sd: 1, em: 0, ed: 7 }]);
+  const removeRange = (i) => setRanges(r => r.filter((_, idx) => idx !== i));
+  const upd = (i, k, v) => setRanges(r => r.map((rng, idx) => idx === i ? { ...rng, [k]: +v } : rng));
+  const preview = useMemo(() => {
+    const work = [], free = [];
+    ranges.forEach(rng => {
+      let cur = new Date(year, rng.sm, rng.sd);
+      const end = new Date(year, rng.em, Math.min(rng.ed, getDaysInMonth(year, rng.em)));
+      while (cur <= end) {
+        const dk = toDateKey(year, cur.getMonth(), cur.getDate());
+        if ((selected[dk]?.jornada || 0) > 0) work.push(dk); else free.push(dk);
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+    return { work: [...new Set(work)], free: [...new Set(free)] };
+  }, [ranges, selected, year]);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 520, border: "1px solid #E2E8F0", boxShadow: "0 24px 60px rgba(0,0,0,0.2)", maxHeight: "92vh", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+        <div style={{ padding: "20px 24px 16px", background: "linear-gradient(135deg,#FEFCE8,#FEF9C3)", borderBottom: "1px solid #FDE047" }}>
+          <div style={{ fontSize: 10, color: "#A16207", letterSpacing: 4, textTransform: "uppercase", marginBottom: 4 }}>Planificar</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#713F12" }}>🏖️ Vacaciones {year}</div>
+          <div style={{ fontSize: 12, color: "#A16207", marginTop: 3 }}>Solo restan jornadas los días que coincidan con trabajo.</div>
+        </div>
+        <div style={{ padding: "16px 22px", overflowY: "auto", flex: 1 }}>
+          {ranges.map((rng, i) => {
+            const maxEd = getDaysInMonth(year, rng.em);
+            return (
+              <div key={i} style={{ background: "#FEFCE8", border: "1px solid #FDE047", borderRadius: 14, padding: "14px 16px", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>Periodo {i + 1}</span>
+                  {ranges.length > 1 && <button onClick={() => removeRange(i)} style={{ background: "#FEE2E2", border: "1px solid #FECACA", color: "#DC2626", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 11 }}>✕</button>}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "flex-end" }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#A16207", marginBottom: 4 }}>DESDE</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <SelectWrap><select value={rng.sm} onChange={e => upd(i, "sm", e.target.value)} style={selectStyle}>{MESES.map((m, mi) => <option key={mi} value={mi}>{m}</option>)}</select></SelectWrap>
+                      <div style={{ width: 64 }}><SelectWrap><select value={rng.sd} onChange={e => upd(i, "sd", e.target.value)} style={selectStyle}>{Array.from({ length: getDaysInMonth(year, rng.sm) }, (_, j) => j+1).map(d => <option key={d} value={d}>{d}</option>)}</select></SelectWrap></div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "center", color: "#94A3B8", fontSize: 18, paddingBottom: 2 }}>→</div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#A16207", marginBottom: 4 }}>HASTA</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <SelectWrap><select value={rng.em} onChange={e => upd(i, "em", e.target.value)} style={selectStyle}>{MESES.map((m, mi) => <option key={mi} value={mi}>{m}</option>)}</select></SelectWrap>
+                      <div style={{ width: 64 }}><SelectWrap><select value={Math.min(rng.ed, maxEd)} onChange={e => upd(i, "ed", e.target.value)} style={selectStyle}>{Array.from({ length: maxEd }, (_, j) => j+1).map(d => <option key={d} value={d}>{d}</option>)}</select></SelectWrap></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <button onClick={addRange} style={{ width: "100%", padding: "10px", borderRadius: 12, border: "1px dashed #FDE047", background: "transparent", color: "#CA8A04", cursor: "pointer", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>+ Añadir otro periodo</button>
+          <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 14, padding: "14px 16px" }}>
+            <div style={{ fontSize: 11, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>Resumen</div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <div><div style={{ fontSize: 11, color: "#94A3B8" }}>Total días</div><div style={{ fontSize: 20, fontWeight: 900, color: "#1E293B" }}>{preview.work.length + preview.free.length}</div></div>
+              <div><div style={{ fontSize: 11, color: "#94A3B8" }}>Días trabajo → cuentan</div><div style={{ fontSize: 20, fontWeight: 900, color: "#CA8A04" }}>{preview.work.length} <span style={{ fontSize: 11, color: "#94A3B8" }}>× 3 = {preview.work.length * 3}j</span></div></div>
+              <div><div style={{ fontSize: 11, color: "#94A3B8" }}>Días libres → no cuentan</div><div style={{ fontSize: 20, fontWeight: 900, color: "#94A3B8" }}>{preview.free.length}</div></div>
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: "14px 22px", borderTop: "1px solid #E2E8F0", display: "flex", gap: 10, justifyContent: "flex-end", background: "#fff" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#64748B", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cancelar</button>
+          <button onClick={() => onApply(ranges)} style={{ padding: "10px 26px", borderRadius: 10, border: "none", background: "linear-gradient(135deg,#CA8A04,#D97706)", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>✓ Aplicar vacaciones</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Pattern Modal ─────────────────────────────────────────────────────────
+function PatronModal({ year, onClose, onApply }) {
+  const [cycle, setCycle] = useState(["jornada", "libre", "libre", "libre", "libre"]);
+  const [cycleLen, setCycleLen] = useState(5);
+  const [sm, setSm] = useState(0); const [sd, setSd] = useState(2);
+  const daysInStart = getDaysInMonth(year, sm);
+  const validDay = Math.min(sd, daysInStart);
+  const adjustLen = (n) => { n = Math.max(2, Math.min(14, n)); setCycleLen(n); setCycle(p => { const nx = [...p]; while (nx.length < n) nx.push("libre"); return nx.slice(0, n); }); };
+  const toggle = (i) => setCycle(p => { const n = [...p]; n[i] = n[i] === "jornada" ? "libre" : "jornada"; return n; });
+  const workDays = cycle.filter(c => c === "jornada").length;
+  const preview = useMemo(() => {
+    let count = 0, pos = 0, cur = new Date(year, sm, validDay);
+    const end = new Date(year, 11, 31);
+    while (cur <= end) { if (cycle[pos % cycle.length] === "jornada") count++; pos++; cur.setDate(cur.getDate() + 1); }
+    return { dias: count, jornadas: count * JORNADAS_POR_DIA };
+  }, [cycle, sm, validDay, year]);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 24, width: "100%", maxWidth: 520, border: "1px solid #E2E8F0", boxShadow: "0 24px 60px rgba(0,0,0,0.2)", maxHeight: "90vh", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+        <div style={{ padding: "20px 24px 16px", background: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", borderBottom: "1px solid #BFDBFE" }}>
+          <div style={{ fontSize: 10, color: "#93C5FD", letterSpacing: 4, textTransform: "uppercase", marginBottom: 4 }}>Configurar</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#1E3A8A" }}>🔄 Ciclo de turnos {year}</div>
+        </div>
+        <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>Días por ciclo</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <button onClick={() => adjustLen(cycleLen - 1)} style={cBtn("#94A3B8", true)}>−</button>
+              <span style={{ fontSize: 26, fontWeight: 900, color: "#1E293B" }}>{cycleLen}</span>
+              <button onClick={() => adjustLen(cycleLen + 1)} style={cBtn("#2563EB", true)}>+</button>
+            </div>
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>Diseño del ciclo</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {cycle.map((tipo, i) => {
+                const isWork = tipo === "jornada";
+                return <button key={i} onClick={() => toggle(i)} style={{ width: 58, height: 72, borderRadius: 12, border: `2px solid ${isWork ? "#DC2626" : "#86EFAC"}`, background: isWork ? "#FEF2F2" : "#F0FDF4", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, boxShadow: isWork ? "0 4px 12px rgba(220,38,38,0.2)" : "none" }}>
+                  <div style={{ fontSize: 9, color: "#94A3B8", fontWeight: 600 }}>Día {i+1}</div>
+                  <div style={{ fontSize: 22 }}>{isWork ? "💼" : "☕"}</div>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: isWork ? "#991B1B" : "#14532D" }}>{isWork ? "TRABAJO" : "DESCANS."}</div>
+                </button>;
+              })}
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>Fecha de inicio</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <SelectWrap><select value={sm} onChange={e => { setSm(+e.target.value); setSd(1); }} style={selectStyle}>{MESES.map((m, i) => <option key={i} value={i}>{m}</option>)}</select></SelectWrap>
+              <div style={{ width: 80 }}><SelectWrap><select value={validDay} onChange={e => setSd(+e.target.value)} style={selectStyle}>{Array.from({ length: daysInStart }, (_, i) => i+1).map(d => <option key={d} value={d}>{d}</option>)}</select></SelectWrap></div>
+            </div>
+          </div>
+          {workDays > 0 && (
+            <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 14, padding: "14px 18px" }}>
+              <div style={{ fontSize: 11, color: "#93C5FD", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>Vista previa {year}</div>
+              <div style={{ display: "flex", gap: 20 }}>
+                <div><div style={{ fontSize: 11, color: "#94A3B8" }}>Días trabajo</div><div style={{ fontSize: 22, fontWeight: 900, color: "#DC2626" }}>{preview.dias}</div></div>
+                <div><div style={{ fontSize: 11, color: "#94A3B8" }}>Jornadas</div><div style={{ fontSize: 22, fontWeight: 900, color: preview.jornadas > OBJETIVO_JORNADAS ? "#DC2626" : "#2563EB" }}>{preview.jornadas}<span style={{ fontSize: 11, color: "#94A3B8" }}> / {OBJETIVO_JORNADAS}</span></div></div>
+                <div><div style={{ fontSize: 11, color: "#94A3B8" }}>Diferencia</div><div style={{ fontSize: 22, fontWeight: 900, color: preview.jornadas > OBJETIVO_JORNADAS ? "#DC2626" : "#16A34A" }}>{preview.jornadas > OBJETIVO_JORNADAS ? "+" : ""}{preview.jornadas - OBJETIVO_JORNADAS}</div></div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ padding: "14px 22px", borderTop: "1px solid #E2E8F0", display: "flex", gap: 10, justifyContent: "flex-end", background: "#fff" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid #E2E8F0", background: "#F8FAFC", color: "#64748B", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cancelar</button>
+          <button onClick={() => onApply(cycle, sm, validDay)} style={{ padding: "10px 26px", borderRadius: 10, border: "none", background: workDays > 0 ? "linear-gradient(135deg,#DC2626,#7C3AED)" : "#E2E8F0", color: workDays > 0 ? "#fff" : "#94A3B8", cursor: workDays > 0 ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 700 }}>✓ Aplicar patrón</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Day Modal ─────────────────────────────────────────────────────────────
+// ── TimeRange ─────────────────────────────────────────────────────────────
+function TimeRange({ value = {}, onChange, color }) {
+  const inp = { background:"#F8FAFC", border:`1.5px solid ${color}55`, borderRadius:8, padding:"5px 8px", color:"#1E293B", fontSize:13, fontWeight:600, outline:"none", width:80, colorScheme:"light" };
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"0 12px 12px" }}>
+      <span style={{ fontSize:11, color:"#94A3B8", flex:1 }}>Horario:</span>
+      <input type="time" value={value.from||""} onChange={e=>onChange({...value,from:e.target.value})} style={inp} />
+      <span style={{ fontSize:11, color:"#94A3B8" }}>a</span>
+      <input type="time" value={value.to||""} onChange={e=>onChange({...value,to:e.target.value})} style={inp} />
+    </div>
+  );
+}
+
+// ── FlexTipoRow ───────────────────────────────────────────────────────────
+function FlexTipoRow({ tipo: t, hours, remaining, onChange, maxH = 24, horario, onHorarioChange }) {
+  const [modo, setModo] = useState("off");
+  const h = hours[t.id] || 0;
+  const active = h > 0;
+
+  // Jornada y libre NO se borran — coexisten con estos tipos
+  // El remaining se calcula solo sobre los "otros tipos", independiente de jornada
+  const sinJornada = getTotalHours(hours) - (hours.jornada || 0) - (hours.libre || 0);
+  const efectivoRemaining = 24 - sinJornada;
+
+  const selCompleta = () => {
+    setModo("completa");
+    // NO eliminamos jornada — solo añadimos este tipo
+    onChange(p => ({ ...p, [t.id]: maxH }));
+  };
+  const selHoras = () => {
+    setModo("horas");
+    onChange(p => { const n={...p}; if(!n[t.id]) n[t.id]=1; return n; });
+  };
+  const borrar = () => { setModo("off"); onChange(p => { const n={...p}; delete n[t.id]; return n; }); };
+  const change = (delta) => onChange(p => {
+    const cur = p[t.id] || 0;
+    const nx  = Math.max(0, Math.min(maxH, cur + delta));
+    const u = { ...p, [t.id]: nx };
+    if (!u[t.id]) delete u[t.id];
+    return u;
+  });
+
+  return (
+    <div style={{ borderRadius:12, border:`1.5px solid ${active?t.color:"#E2E8F0"}`, background:active?t.bg:"#FAFAFA", overflow:"hidden", marginBottom:8 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px" }}>
+        <span style={{ fontSize:17 }}>{t.emoji}</span>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:active?t.text:"#94A3B8" }}>{t.label}</div>
+          {active && <div style={{ fontSize:10, color:t.color, marginTop:1 }}>{modo==="completa"?"Día completo · 24h":`${h}h asignadas`}</div>}
+        </div>
+        {active && <button onClick={borrar} style={{ background:"#FEE2E2", border:"1px solid #FECACA", color:"#DC2626", borderRadius:6, padding:"2px 8px", cursor:"pointer", fontSize:10, fontWeight:700 }}>✕</button>}
+      </div>
+      {!active && (
+        <div style={{ display:"flex", margin:"0 12px 12px", borderRadius:8, overflow:"hidden", border:"1px solid #E2E8F0" }}>
+          <button onClick={selCompleta} style={{ flex:1, padding:"8px 0", border:"none", cursor:"pointer", fontSize:11, fontWeight:700, background:"#fff", color:t.color, borderRight:"1px solid #E2E8F0" }}>✓ Día completo (24h)</button>
+          <button onClick={selHoras} style={{ flex:1, padding:"8px 0", border:"none", cursor:"pointer", fontSize:11, fontWeight:700, background:"#fff", color:t.color }}>🕐 Por horas</button>
+        </div>
+      )}
+      {active && modo!=="completa" && (
+        <div style={{ display:"flex", alignItems:"center", gap:8, padding:"0 12px 12px" }}>
+          <span style={{ fontSize:11, color:"#94A3B8", flex:1 }}>Horas:</span>
+          <button onClick={()=>change(-1)} style={cBtn(t.color, h>0)}>−</button>
+          <input type="number" min="0" max="24" value={h} onChange={e=>change((parseInt(e.target.value)||0)-h)} style={{ width:42, textAlign:"center", background:"#fff", border:`1.5px solid ${t.color}`, borderRadius:8, color:t.text, fontSize:14, fontWeight:800, padding:"4px 0", outline:"none" }} />
+          <span style={{ fontSize:11, color:"#94A3B8" }}>h</span>
+          <button onClick={()=>change(1)} disabled={efectivoRemaining<=0} style={cBtn(t.color, efectivoRemaining>0)}>+</button>
+        </div>
+      )}
+      {active && onHorarioChange && (
+        <TimeRange value={horario||{}} onChange={onHorarioChange} color={t.color} />
+      )}
+    </div>
+  );
+}
+
+function DayModal({ dateKey, dayData, dayMeta, onClose, onSave, asuntosUsados, excesoBruto, sindicalMesUsado, patronDia }) {
+  // Exclude "libre" from editable hours — libre is just a background marker from the pattern
+  const [hours, setHours] = useState(() => { const h = { ...dayData }; delete h.libre; return h; });
+  const [meta, setMeta] = useState({ ...dayMeta });
+  const [horario, setHorario] = useState(dayMeta.horario || {});
+  const setTipoHorario = (id, val) => setHorario(prev => ({ ...prev, [id]: val }));
+  const total = getTotalHours(hours);
+  const remaining = 24 - total;
+  const parts = dateKey.split("-");
+  const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
+  const dow = d.getDay() === 0 ? 6 : d.getDay() - 1;
+  const dateLabel = `${DIAS_FULL[dow]}, ${+parts[2]} de ${MESES[+parts[1]-1]} de ${parts[0]}`;
+  const handleH = (v) => setHours(prev => typeof v === "function" ? v(prev) : v);
+
+  const jorT = TIPOS[0]; const jorH = hours.jornada||0; const isCompleta = meta.jornada_completa===true; const jorActive = jorH>0||isCompleta;
+  const selCompleta = () => { setMeta(m=>({...m,jornada_completa:true})); setHours({jornada:24}); };
+  const selHoras = () => { setMeta(m=>({...m,jornada_completa:false})); setHours(p=>{const n={...p};delete n.jornada;return n;}); };
+  const changeJorH = (delta) => { if(isCompleta) return; handleH(p=>{const cur=p.jornada||0;const nx=Math.max(0,cur+delta);if(getTotalHours(p)-cur+nx>24)return p;const u={...p,jornada:nx};if(!u.jornada)delete u.jornada;return u;}); };
+
+  const asT=TIPOS[2]; const asH=hours.asuntos||0; const asActive=asH>0;
+  const asRestantes=(ASUNTOS_TOTAL*8)-(asuntosUsados-(dayData.asuntos||0));
+  const changeAsH=(delta)=>handleH(p=>{const cur=p.asuntos||0;const nx=Math.max(0,Math.min(asRestantes,cur+delta));if(getTotalHours(p)-cur+nx>24)return p;const u={...p,asuntos:nx};if(!u.asuntos)delete u.asuntos;return u;});
+
+  const exT=TIPOS[3]; const exH=hours.excesos||0; const exActive=exH>0;
+  const horasExcesosDisp=excesoBruto*8;
+  const changeExH=(delta)=>handleH(p=>{const cur=p.excesos||0;const nx=Math.max(0,Math.min(horasExcesosDisp,cur+delta));if(getTotalHours(p)-cur+nx>24)return p;const u={...p,excesos:nx};if(!u.excesos)delete u.excesos;return u;});
+
+  const otrosTipos=TIPOS.filter(t=>!["jornada","asuntos","excesos","vacaciones"].includes(t.id));
+
+  return (
+    <div style={{ position:"fixed",inset:0,zIndex:1000,background:"rgba(15,23,42,0.6)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16 }} onClick={onClose}>
+      <div style={{ background:"#fff",borderRadius:22,width:"100%",maxWidth:490,border:"1px solid #E2E8F0",boxShadow:"0 24px 60px rgba(0,0,0,0.18)",maxHeight:"92vh",display:"flex",flexDirection:"column" }} onClick={e=>e.stopPropagation()}>
+        <div style={{ padding:"16px 20px 12px",background:"#F8FAFC",borderBottom:"1px solid #E2E8F0",flexShrink:0 }}>
+          <div style={{ fontSize:10,color:"#94A3B8",letterSpacing:3,textTransform:"uppercase",marginBottom:3 }}>Asignar jornada</div>
+          <div style={{ fontSize:17,fontWeight:800,color:"#0F172A" }}>{dateLabel}</div>
+          <div style={{ marginTop:10 }}>
+            <div style={{ display:"flex",justifyContent:"space-between",marginBottom:5 }}>
+              <span style={{ fontSize:10,color:"#94A3B8" }}>Horas del día</span>
+              <span style={{ fontSize:11,fontWeight:800,color:remaining===0?"#16A34A":"#64748B" }}>{total}h / 24h</span>
+            </div>
+            <div style={{ height:8,background:"#E2E8F0",borderRadius:8,overflow:"hidden",display:"flex" }}>
+              {TIPOS.map(t=>{const h=hours[t.id]||0;return h?<div key={t.id} style={{ width:`${(h/24)*100}%`,background:t.color }} />:null;})}
+            </div>
+          </div>
+        </div>
+        <div style={{ padding:"10px 14px",overflowY:"auto",flex:1 }}>
+          {/* Jornada */}
+          <div style={{ borderRadius:12,border:`1.5px solid ${jorActive?jorT.color:"#E2E8F0"}`,background:jorActive?jorT.bg:"#FAFAFA",overflow:"hidden",marginBottom:8 }}>
+            <div style={{ display:"flex",alignItems:"center",gap:8,padding:"10px 14px" }}>
+              <span style={{ fontSize:17 }}>{jorT.emoji}</span>
+              <span style={{ flex:1,fontSize:13,fontWeight:700,color:jorActive?jorT.text:"#94A3B8" }}>{jorT.label}</span>
+              {jorActive&&<span style={{ fontSize:10,color:jorT.color,background:"#fff",border:`1px solid ${jorT.border}`,borderRadius:7,padding:"2px 8px",fontWeight:800 }}>{isCompleta?"24h · 3j":`${jorH}h`}</span>}
+            </div>
+            <div style={{ display:"flex",margin:"0 12px 12px",borderRadius:8,overflow:"hidden",border:"1px solid #E2E8F0" }}>
+              <button onClick={selCompleta} style={{ flex:1,padding:"8px 0",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:isCompleta?jorT.color:"#fff",color:isCompleta?"#fff":"#94A3B8",borderRight:"1px solid #E2E8F0" }}>✓ Completa (24h)</button>
+              <button onClick={selHoras} style={{ flex:1,padding:"8px 0",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:!isCompleta&&jorActive?jorT.bg:"#fff",color:!isCompleta&&jorActive?jorT.text:"#94A3B8" }}>🕐 Por horas</button>
+            </div>
+            {!isCompleta&&(
+              <div style={{ display:"flex",alignItems:"center",gap:8,padding:"0 12px 12px" }}>
+                <span style={{ fontSize:11,color:"#94A3B8",flex:1 }}>Horas:</span>
+                <button onClick={()=>changeJorH(-1)} style={cBtn(jorT.color,jorH>0)}>−</button>
+                <input type="number" min="0" max="24" value={jorH} onChange={e=>changeJorH((parseInt(e.target.value)||0)-jorH)} style={{ width:44,textAlign:"center",background:"#fff",border:`1.5px solid ${jorActive?jorT.color:"#E2E8F0"}`,borderRadius:8,color:jorActive?jorT.text:"#94A3B8",fontSize:14,fontWeight:800,padding:"4px 0",outline:"none" }} />
+                <span style={{ fontSize:11,color:"#94A3B8" }}>h</span>
+                <button onClick={()=>changeJorH(1)} disabled={remaining<=0} style={cBtn(jorT.color,remaining>0)}>+</button>
+              </div>
+            )}
+          </div>
+
+          {/* Asuntos */}
+          <div style={{ borderRadius:12,border:`1.5px solid ${asActive?asT.color:"#E2E8F0"}`,background:asActive?asT.bg:"#FAFAFA",overflow:"hidden",marginBottom:8 }}>
+            <div style={{ display:"flex",alignItems:"center",gap:8,padding:"10px 14px" }}>
+              <span style={{ fontSize:17 }}>{asT.emoji}</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13,fontWeight:700,color:asActive?asT.text:"#94A3B8" }}>{asT.label}</div>
+                <div style={{ fontSize:10,color:asActive?asT.color:"#94A3B8" }}>{asActive?`${asH}h · ${Math.ceil(asH/8)} asunto(s)`:`Quedan ${Math.floor(asRestantes/8)} de ${ASUNTOS_TOTAL}`}</div>
+              </div>
+              {asActive&&<button onClick={()=>handleH(p=>{const n={...p};delete n.asuntos;return n;})} style={{ background:"#FEE2E2",border:"1px solid #FECACA",color:"#DC2626",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:10,fontWeight:700 }}>✕</button>}
+            </div>
+            {!asActive&&asRestantes>0&&(
+              <div style={{ display:"flex",margin:"0 12px 12px",borderRadius:8,overflow:"hidden",border:"1px solid #E2E8F0" }}>
+                <button onClick={()=>handleH(p=>({...p, asuntos:Math.min(24,asRestantes)}))} style={{ flex:1,padding:"8px 0",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:"#fff",color:"#7C3AED",borderRight:"1px solid #E2E8F0" }}>✓ Día completo</button>
+                <button onClick={()=>handleH(p=>({...p, asuntos:8}))} style={{ flex:1,padding:"8px 0",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:"#fff",color:"#7C3AED" }}>🕐 Por horas (8h)</button>
+              </div>
+            )}
+            {asActive&&(
+              <div style={{ display:"flex",alignItems:"center",gap:8,padding:"0 12px 12px" }}>
+                <span style={{ fontSize:11,color:"#94A3B8",flex:1 }}>Horas (×8):</span>
+                <button onClick={()=>changeAsH(-8)} style={cBtn(asT.color,asH>0)}>−</button>
+                <input type="number" min="0" step="8" value={asH} onChange={e=>changeAsH((parseInt(e.target.value)||0)-asH)} style={{ width:44,textAlign:"center",background:"#fff",border:`1.5px solid ${asT.color}`,borderRadius:8,color:asT.text,fontSize:14,fontWeight:800,padding:"4px 0",outline:"none" }} />
+                <span style={{ fontSize:11,color:"#94A3B8" }}>h</span>
+                <button onClick={()=>changeAsH(8)} disabled={asH>=asRestantes||remaining<8} style={cBtn(asT.color,asH<asRestantes&&remaining>=8)}>+</button>
+              </div>
+            )}
+          {asActive && <TimeRange value={horario.asuntos||{}} onChange={v=>setTipoHorario("asuntos",v)} color={asT.color} />}
+          </div>
+
+          {/* Excesos */}
+          <div style={{ borderRadius:12,border:`1.5px solid ${exActive?exT.color:"#E2E8F0"}`,background:exActive?exT.bg:"#FAFAFA",overflow:"hidden",marginBottom:8 }}>
+            <div style={{ display:"flex",alignItems:"center",gap:8,padding:"10px 14px" }}>
+              <span style={{ fontSize:17 }}>{exT.emoji}</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13,fontWeight:700,color:exActive?exT.text:"#94A3B8" }}>{exT.label}</div>
+                <div style={{ fontSize:10,color:exActive?exT.color:"#94A3B8" }}>{exActive?`${exH}h · ${Math.ceil(exH/8)} exceso(s) compensado(s)`:excesoBruto>0?`${excesoBruto} excesos disponibles (${horasExcesosDisp}h)`:"Sin excesos acumulados"}</div>
+              </div>
+              {exActive&&<button onClick={()=>handleH(p=>{const n={...p};delete n.excesos;return n;})} style={{ background:"#FEE2E2",border:"1px solid #FECACA",color:"#DC2626",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:10,fontWeight:700 }}>✕</button>}
+            </div>
+            {!exActive&&excesoBruto>0&&(
+              <div style={{ display:"flex",margin:"0 12px 12px",borderRadius:8,overflow:"hidden",border:"1px solid #E2E8F0" }}>
+                <button onClick={()=>handleH(p=>({...p, excesos:Math.min(24,horasExcesosDisp)}))} style={{ flex:1,padding:"8px 0",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:"#fff",color:"#0891B2",borderRight:"1px solid #E2E8F0" }}>✓ Día completo</button>
+                <button onClick={()=>handleH(p=>({...p, excesos:8}))} style={{ flex:1,padding:"8px 0",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:"#fff",color:"#0891B2" }}>🕐 Por horas (8h)</button>
+              </div>
+            )}
+            {exActive&&(
+              <div style={{ display:"flex",alignItems:"center",gap:8,padding:"0 12px 12px" }}>
+                <span style={{ fontSize:11,color:"#94A3B8",flex:1 }}>Horas (×8):</span>
+                <button onClick={()=>changeExH(-8)} style={cBtn(exT.color,exH>0)}>−</button>
+                <input type="number" min="0" step="8" value={exH} onChange={e=>changeExH((parseInt(e.target.value)||0)-exH)} style={{ width:44,textAlign:"center",background:"#fff",border:`1.5px solid ${exT.color}`,borderRadius:8,color:exT.text,fontSize:14,fontWeight:800,padding:"4px 0",outline:"none" }} />
+                <span style={{ fontSize:11,color:"#94A3B8" }}>h</span>
+                <button onClick={()=>changeExH(8)} disabled={exH>=horasExcesosDisp||remaining<8} style={cBtn(exT.color,exH<horasExcesosDisp&&remaining>=8)}>+</button>
+              </div>
+            )}
+          {exActive && <TimeRange value={horario.excesos||{}} onChange={v=>setTipoHorario("excesos",v)} color={exT.color} />}
+          </div>
+
+          <div style={{ display:"flex",alignItems:"center",gap:8,margin:"10px 0 8px" }}>
+            <div style={{ flex:1,height:1,background:"#F1F5F9" }} />
+            <span style={{ fontSize:9,color:"#CBD5E1",letterSpacing:2,textTransform:"uppercase" }}>Otros tipos</span>
+            <div style={{ flex:1,height:1,background:"#F1F5F9" }} />
+          </div>
+
+          {otrosTipos.map(t=>{
+            const maxH = t.id === "sindical" ? Math.max(0, SINDICAL_MAX_MES - sindicalMesUsado + (hours.sindical || 0)) : 24;
+            const needsTime = ["sindical","permiso","refuerzo"].includes(t.id);
+            return <FlexTipoRow key={t.id} tipo={t} hours={hours} remaining={remaining} onChange={handleH} maxH={maxH} horario={needsTime?(horario[t.id]||{}):undefined} onHorarioChange={needsTime?(v=>setTipoHorario(t.id,v)):undefined} />;
+          })}
+        </div>
+        <div style={{ padding:"12px 18px",borderTop:"1px solid #E2E8F0",display:"flex",gap:10,flexWrap:"wrap",flexShrink:0,background:"#fff" }}>
+          {patronDia && (
+            <button onClick={()=>onSave(dateKey, patronDia==="jornada"?{jornada:24}:{libre:24}, patronDia==="jornada"?{jornada_completa:true,horario:{}}:{horario:{}})} style={{ padding:"9px 14px",borderRadius:10,border:"1px solid #FDE68A",background:"#FFFBEB",color:"#92400E",cursor:"pointer",fontSize:12,fontWeight:700,marginRight:"auto" }}>
+              ↩ Restaurar patrón ({patronDia==="jornada"?"💼 Jornada":"☕ Descanso"})
+            </button>
+          )}
+          <button onClick={onClose} style={{ padding:"10px 18px",borderRadius:10,border:"1px solid #E2E8F0",background:"#F8FAFC",color:"#64748B",cursor:"pointer",fontSize:13,fontWeight:600 }}>Cancelar</button>
+          <button onClick={()=>onSave(dateKey,hours,{...meta,horario})} style={{ padding:"10px 22px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#DC2626,#7C3AED)",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700 }}>Guardar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────
+function CuadranteAnual() {
+  const currentYear = new Date().getFullYear();
+  const [year, setYear] = useState(currentYear);
+  const [selected, setSelected] = useState({});
+  const [patron, setPatron] = useState({}); // stores original pattern per day
+  const [meta, setMeta] = useState({});
+  const [modal, setModal] = useState(null);
+  const [showPatron, setShowPatron] = useState(false);
+  const [showVac, setShowVac] = useState(false);
+  // Auto-save to localStorage (funciona en Chrome con archivos locales)
+  useEffect(() => { try { localStorage.setItem("cua_year", JSON.stringify(year)); } catch(e){} }, [year]);
+  useEffect(() => { try { localStorage.setItem("cua_selected", JSON.stringify(selected)); } catch(e){} }, [selected]);
+  useEffect(() => { try { localStorage.setItem("cua_meta", JSON.stringify(meta)); } catch(e){} }, [meta]);
+  useEffect(() => { try { localStorage.setItem("cua_patron", JSON.stringify(patron)); } catch(e){} }, [patron]);
+
+  // Exportar datos a fichero JSON
+  const exportarDatos = () => {
+    const datos = { year, selected, meta, patron, exportado: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(datos, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cuadrante-${year}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Importar datos desde fichero JSON
+  const importarDatos = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const datos = JSON.parse(ev.target.result);
+        if (datos.selected) setSelected(datos.selected);
+        if (datos.meta)     setMeta(datos.meta);
+        if (datos.patron)   setPatron(datos.patron);
+        if (datos.year)     setYear(datos.year);
+        alert("✅ Datos importados correctamente");
+      } catch(err) { alert("❌ Error al leer el archivo. ¿Es un archivo cuadrante.json válido?"); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const [view, setView] = useState("annual");
+  const [viewMonth, setViewMonth] = useState(new Date().getMonth());
+  const [viewWeekStart, setViewWeekStart] = useState(() => getWeekStart(new Date()));
+  const [blink, setBlink] = useState(true);
+  const TODAY = todayKey();
+
+  useEffect(() => {
+    const t = setInterval(() => setBlink(b => !b), 700);
+    return () => clearInterval(t);
+  }, []);
+
+  const openDay = (dk) => {
+    setModal(dk);
+  };
+  const openMonth = (mi) => { setViewMonth(mi); setView("monthly"); };
+
+  const saveDay = (dk, hours, dayMeta) => {
+    setSelected(prev => { const c = Object.fromEntries(Object.entries(hours).filter(([,h])=>h>0)); if(!Object.keys(c).length){const n={...prev};delete n[dk];return n;} return {...prev,[dk]:c}; });
+    setMeta(prev => ({ ...prev, [dk]: dayMeta }));
+    setModal(null);
+  };
+
+  const handleApplyPatron = (cycle, sm, sd) => {
+    const { newSelected, newMeta } = applyPattern(year, sm, sd, cycle);
+    setSelected(prev => ({ ...prev, ...newSelected }));
+    setMeta(prev => ({ ...prev, ...newMeta }));
+    // Store pattern type per day for restore
+    const patronTypes = {};
+    Object.entries(newSelected).forEach(([dk, d]) => { patronTypes[dk] = d.jornada ? "jornada" : "libre"; });
+    setPatron(prev => ({ ...prev, ...patronTypes }));
+    setShowPatron(false);
+  };
+
+  const handleApplyVacaciones = (ranges) => {
+    setSelected(prev => {
+      const metaSnap = meta;
+      const next = { ...prev };
+      const newMeta = { ...metaSnap };
+      ranges.forEach(rng => {
+        let cur = new Date(year, rng.sm, rng.sd);
+        const end = new Date(year, rng.em, Math.min(rng.ed, getDaysInMonth(year, rng.em)));
+        while (cur <= end) {
+          const dk = toDateKey(year, cur.getMonth(), cur.getDate());
+          const eraJornada = (prev[dk]?.jornada || 0) > 0;
+          next[dk] = { vacaciones: 24 };
+          newMeta[dk] = { vacacion_trabajo: eraJornada };
+          cur.setDate(cur.getDate() + 1);
+        }
+      });
+      setTimeout(() => setMeta(newMeta), 0);
+      return next;
+    });
+    setShowVac(false);
+  };
+
+  const stats = useMemo(() => {
+    const counts = {};
+    TIPOS.forEach(t => { counts[t.id] = 0; });
+    let diasTrabajo = 0, diasVacaciones = 0, horasAsuntos = 0, horasExcesos = 0;
+    const asuntosDias = [], excesosDias = [];
+    const sindicalPorMes = {};
+    for (let m = 0; m < 12; m++) sindicalPorMes[m] = { horas: 0, dias: [] };
+    const tiposDias = {};
+
+    Object.entries(selected).forEach(([dk, dayData]) => {
+      Object.entries(dayData).forEach(([id, h]) => { if (counts[id] !== undefined) counts[id] += h; });
+      if ((dayData.jornada || 0) > 0) diasTrabajo++;
+      if ((dayData.vacaciones || 0) > 0 && meta[dk]?.vacacion_trabajo === true) diasVacaciones++;
+      if ((dayData.asuntos || 0) > 0) { horasAsuntos += dayData.asuntos; asuntosDias.push(dk); }
+      if ((dayData.excesos || 0) > 0) { horasExcesos += dayData.excesos; excesosDias.push(dk); }
+      if ((dayData.sindical || 0) > 0) { const { m } = parseKey(dk); sindicalPorMes[m].horas += dayData.sindical; sindicalPorMes[m].dias.push({ dk, horas: dayData.sindical }); }
+      ["guardia","refuerzo","permiso","baja","festivo"].forEach(id => {
+        if ((dayData[id] || 0) > 0) { if (!tiposDias[id]) tiposDias[id] = []; tiposDias[id].push({ dk, horas: dayData[id] }); }
+      });
+    });
+
+    const jornadasTrabajadas = diasTrabajo * JORNADAS_POR_DIA;
+    const jornadasVacaciones = diasVacaciones * JORNADAS_POR_DIA;
+    const totalConsumido = jornadasTrabajadas + jornadasVacaciones;
+    // ✅ Exceso solo sobre jornadas trabajadas reales, no sobre vacaciones
+    const excesoBruto = Math.max(0, jornadasTrabajadas - OBJETIVO_JORNADAS);
+    const excesosUsados = Math.floor(horasExcesos / 8);
+    const excesoNeto = Math.max(0, excesoBruto - excesosUsados);
+
+    return {
+      counts, diasTrabajo, diasVacaciones, jornadasTrabajadas, jornadasVacaciones, totalConsumido,
+      excesoBruto, excesosUsados, excesoNeto, horasExcesos, excesosDias: excesosDias.sort(),
+      horasAsuntos, asuntosUsados: Math.ceil(horasAsuntos / 8), asuntosRestantes: ASUNTOS_TOTAL - Math.ceil(horasAsuntos / 8), asuntosDias: asuntosDias.sort(),
+      sindicalPorMes, tiposDias,
+    };
+  }, [selected, meta]);
+
+  const pct = Math.min(100, (stats.totalConsumido / OBJETIVO_JORNADAS) * 100);
+
+  const prevWeek = () => { const d = new Date(viewWeekStart); d.setDate(d.getDate()-7); setViewWeekStart(d); };
+  const nextWeek = () => { const d = new Date(viewWeekStart); d.setDate(d.getDate()+7); setViewWeekStart(d); };
+
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(viewWeekStart); d.setDate(d.getDate()+i);
+    return { date: d, dk: toDateKey(d.getFullYear(), d.getMonth(), d.getDate()), day: d.getDate(), month: d.getMonth(), dow: i };
+  });
+  const weekLabel = `${weekDays[0].date.getDate()} ${MESES_CORTO[weekDays[0].date.getMonth()]} – ${weekDays[6].date.getDate()} ${MESES_CORTO[weekDays[6].date.getMonth()]} ${weekDays[6].date.getFullYear()}`;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(160deg,#EFF6FF 0%,#F0F9FF 40%,#F5F3FF 100%)", fontFamily: "'Segoe UI', system-ui, sans-serif", color: "#0F172A", padding: "20px 14px" }}>
+
+      {modal && <DayModal dateKey={modal} dayData={selected[modal]||{}} dayMeta={meta[modal]||{}} onClose={()=>setModal(null)} onSave={saveDay} asuntosUsados={stats.horasAsuntos} excesoBruto={stats.excesoBruto} sindicalMesUsado={(() => { const {m} = parseKey(modal); return stats.sindicalPorMes[m]?.horas || 0; })()} patronDia={patron[modal]} />}
+      {showPatron && <PatronModal year={year} onClose={()=>setShowPatron(false)} onApply={handleApplyPatron} />}
+      {showVac && <VacacionesModal year={year} selected={selected} onClose={()=>setShowVac(false)} onApply={handleApplyVacaciones} />}
+
+      {/* Header */}
+      <div style={{ textAlign:"center", marginBottom:14 }}>
+        <div style={{ fontSize:10, letterSpacing:5, color:"#94A3B8", textTransform:"uppercase", marginBottom:4 }}>Planificación Laboral</div>
+        <h1 style={{ margin:0, fontSize:26, fontWeight:900, color:"#0F172A", letterSpacing:-1 }}>
+          Cuadrante Anual
+          <span title="Pulsa 'Guardar datos' para no perder tu trabajo" style={{ fontSize:11, fontWeight:500, color:"#16A34A", marginLeft:10, verticalAlign:"middle" }}>💾 Guarda con el botón verde</span>
+        </h1>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:14, marginTop:10 }}>
+          <button onClick={()=>setYear(y=>y-1)} style={{ background:"#fff",border:"1px solid #E2E8F0",color:"#64748B",borderRadius:9,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>‹</button>
+          <span style={{ fontSize:20, fontWeight:900, color:"#2563EB", minWidth:72, textAlign:"center" }}>{year}</span>
+          <button onClick={()=>setYear(y=>y+1)} style={{ background:"#fff",border:"1px solid #E2E8F0",color:"#64748B",borderRadius:9,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>›</button>
+        </div>
+      </div>
+
+      {/* Today banner */}
+      <TodayBanner selected={selected} meta={meta} />
+
+      {/* View tabs + actions */}
+      <div style={{ display:"flex", gap:8, justifyContent:"center", marginBottom:14, flexWrap:"wrap" }}>
+        {[["annual","📅 Anual"],["monthly","🗓️ Mensual"],["weekly","📆 Semanal"]].map(([v,label])=>(
+          <button key={v} onClick={()=>setView(v)} style={{ padding:"8px 16px",borderRadius:10,border:`1.5px solid ${view===v?"#2563EB":"#E2E8F0"}`,background:view===v?"#EFF6FF":"#fff",color:view===v?"#1E40AF":"#64748B",cursor:"pointer",fontSize:12,fontWeight:700,boxShadow:view===v?"0 2px 8px rgba(37,99,235,0.15)":"none" }}>{label}</button>
+        ))}
+        <div style={{ width:1, background:"#E2E8F0", margin:"0 4px" }} />
+        <button
+          onClick={exportarDatos}
+          title="Guarda todos tus datos en un archivo .json"
+          style={{ padding:"8px 16px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#16A34A,#0891B2)",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:700,boxShadow:"0 4px 12px rgba(22,163,74,0.3)" }}
+        >💾 Guardar datos</button>
+        <label
+          title="Carga tus datos desde un archivo .json guardado anteriormente"
+          style={{ padding:"8px 16px",borderRadius:10,border:"1px solid #A7F3D0",background:"#ECFDF5",color:"#065F46",cursor:"pointer",fontSize:12,fontWeight:700 }}
+        >
+          📂 Cargar datos
+          <input type="file" accept=".json" onChange={importarDatos} style={{ display:"none" }} />
+        </label>
+        <div style={{ width:1, background:"#E2E8F0", margin:"0 2px" }} />
+        <button onClick={()=>setShowPatron(true)} style={{ padding:"8px 16px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#DC2626,#7C3AED)",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:700 }}>🔄 Patrón</button>
+        <button onClick={()=>setShowVac(true)} style={{ padding:"8px 16px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#CA8A04,#D97706)",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:700 }}>🏖️ Vacaciones</button>
+        <button
+          onClick={()=>{
+            // Borrar solo días de patrón (jornada pura o libre pura)
+            setSelected(prev=>{
+              const next={...prev};
+              Object.keys(next).forEach(dk=>{
+                const d=next[dk];
+                const keys=Object.keys(d).filter(k=>d[k]>0);
+                if(keys.length===1&&(keys[0]==="jornada"||keys[0]==="libre")) delete next[dk];
+              });
+              return next;
+            });
+            setMeta(prev=>{
+              const next={...prev};
+              Object.keys(patron).forEach(dk=>{ if(!Object.keys(next[dk]||{}).some(k=>!["jornada_completa","horario"].includes(k))) delete next[dk]; });
+              return next;
+            });
+            setPatron({});
+          }}
+          title="Limpiar patrón de turnos"
+          style={{ padding:"8px 12px",borderRadius:10,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",cursor:"pointer",fontSize:12,fontWeight:600 }}
+        >🗑 Patrón</button>
+        <button
+          onClick={()=>{
+            // Borrar vacaciones y restaurar el patrón original en esos días
+            setSelected(prev=>{
+              const next={...prev};
+              Object.keys(next).forEach(dk=>{
+                if((next[dk].vacaciones||0)>0){
+                  const patronTipo = patron[dk];
+                  if(patronTipo==="jornada") next[dk]={jornada:24};
+                  else if(patronTipo==="libre") next[dk]={libre:24};
+                  else delete next[dk];
+                }
+              });
+              return next;
+            });
+            setMeta(prev=>{
+              const next={...prev};
+              Object.keys(next).forEach(dk=>{
+                if(next[dk]?.vacacion_trabajo!==undefined){
+                  const patronTipo = patron[dk];
+                  next[dk] = patronTipo==="jornada" ? {jornada_completa:true} : {};
+                }
+              });
+              return next;
+            });
+          }}
+          title="Limpiar vacaciones"
+          style={{ padding:"8px 12px",borderRadius:10,border:"1px solid #FDE047",background:"#FEFCE8",color:"#92400E",cursor:"pointer",fontSize:12,fontWeight:600 }}
+        >🗑 Vacaciones</button>
+        <button onClick={()=>{setSelected({});setMeta({});setPatron({});try{localStorage.removeItem("cua_selected");localStorage.removeItem("cua_meta");localStorage.removeItem("cua_patron");}catch(e){}}} title="Limpiar todo" style={{ padding:"8px 14px",borderRadius:10,border:"1px solid #E2E8F0",background:"#fff",color:"#94A3B8",cursor:"pointer",fontSize:12,fontWeight:600 }}>🗑 Todo</button>
+      </div>
+
+      {/* Annual */}
+      {view === "annual" && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(248px, 1fr))", gap:10, maxWidth:1200, margin:"0 auto 22px" }}>
+          {MESES.map((mes, mi) => {
+            const daysInMonth = getDaysInMonth(year, mi);
+            const firstDay = getFirstDay(year, mi);
+            const cells = [];
+            for (let i = 0; i < firstDay; i++) cells.push(null);
+            for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+            return (
+              <div key={mi} style={{ ...card, padding:"10px 9px" }}>
+                <button onClick={()=>openMonth(mi)} style={{ width:"100%",textAlign:"center",fontWeight:800,fontSize:11,color:"#2563EB",marginBottom:7,letterSpacing:2,textTransform:"uppercase",background:"none",border:"none",cursor:"pointer",padding:"3px 0",borderRadius:6 }}
+                  onMouseEnter={e=>e.currentTarget.style.background="#EFF6FF"}
+                  onMouseLeave={e=>e.currentTarget.style.background="none"}
+                >{mes}</button>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:1, marginBottom:2 }}>
+                  {DIAS_LABEL.map((dl,i)=><div key={dl} style={{ textAlign:"center",fontSize:8,fontWeight:700,color:i>=5?"#CBD5E1":"#94A3B8" }}>{dl}</div>)}
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:1 }}>
+                  {cells.map((day, idx) => {
+                    if (!day) return <div key={`e-${idx}`} />;
+                    const dk = toDateKey(year, mi, day);
+                    const dow = (firstDay + day - 1) % 7;
+                    const isToday = dk === TODAY;
+                    return <DayCell key={dk} day={day} dk={dk} dayData={selected[dk]||{}} dayMeta={meta[dk]||{}} isWeekend={dow>=5} onClick={()=>openDay(dk)} size="small" isToday={isToday} blink={blink} />;
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Monthly */}
+      {view === "monthly" && (
+        <div style={{ maxWidth:700, margin:"0 auto 22px" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:16, marginBottom:14 }}>
+            <button onClick={()=>setViewMonth(m=>(m+11)%12)} style={{ background:"#fff",border:"1px solid #E2E8F0",color:"#64748B",borderRadius:9,width:34,height:34,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>‹</button>
+            <span style={{ fontSize:20, fontWeight:900, color:"#0F172A", minWidth:180, textAlign:"center" }}>{MESES[viewMonth]} {year}</span>
+            <button onClick={()=>setViewMonth(m=>(m+1)%12)} style={{ background:"#fff",border:"1px solid #E2E8F0",color:"#64748B",borderRadius:9,width:34,height:34,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>›</button>
+          </div>
+          <div style={{ ...card, padding:"16px" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:4, marginBottom:8 }}>
+              {DIAS_LABEL.map((dl,i)=><div key={dl} style={{ textAlign:"center",fontSize:11,fontWeight:700,color:i>=5?"#CBD5E1":"#94A3B8",padding:"4px 0" }}>{dl}</div>)}
+            </div>
+            {(() => {
+              const daysInMonth = getDaysInMonth(year, viewMonth);
+              const firstDay = getFirstDay(year, viewMonth);
+              const cells = [];
+              for (let i = 0; i < firstDay; i++) cells.push(null);
+              for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+              return (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:4 }}>
+                  {cells.map((day, idx) => {
+                    if (!day) return <div key={`e-${idx}`} />;
+                    const dk = toDateKey(year, viewMonth, day);
+                    const dow = (firstDay + day - 1) % 7;
+                    const isToday = dk === TODAY;
+                    return <DayCell key={dk} day={day} dk={dk} dayData={selected[dk]||{}} dayMeta={meta[dk]||{}} isWeekend={dow>=5} onClick={()=>{const ws=getWeekStart(new Date(year,viewMonth,day));setViewWeekStart(ws);setView("weekly");setModal(dk);}} size="medium" isToday={isToday} blink={blink} />;
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Weekly */}
+      {view === "weekly" && (
+        <div style={{ maxWidth:900, margin:"0 auto 22px" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:16, marginBottom:14 }}>
+            <button onClick={prevWeek} style={{ background:"#fff",border:"1px solid #E2E8F0",color:"#64748B",borderRadius:9,width:34,height:34,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>‹</button>
+            <span style={{ fontSize:16, fontWeight:800, color:"#0F172A", textAlign:"center" }}>{weekLabel}</span>
+            <button onClick={nextWeek} style={{ background:"#fff",border:"1px solid #E2E8F0",color:"#64748B",borderRadius:9,width:34,height:34,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>›</button>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:8 }}>
+            {weekDays.map(({ date, dk, day, month, dow }) => {
+              const isToday = dk === TODAY;
+              return (
+                <div key={dk} style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  <div style={{ textAlign:"center" }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:isToday?"#2563EB":dow>=5?"#CBD5E1":"#94A3B8" }}>{DIAS_LABEL[dow]}</div>
+                    <div style={{ fontSize:20, fontWeight:900, color:isToday?"#2563EB":dow>=5?"#CBD5E1":"#475569" }}>{day}</div>
+                    <div style={{ fontSize:9, color:"#94A3B8" }}>{MESES_CORTO[month]}</div>
+                    {isToday && <div style={{ width:6,height:6,borderRadius:"50%",background:blink?"#2563EB":"transparent",margin:"2px auto 0",transition:"background 0.1s",boxShadow:blink?"0 0 6px #2563EB":"none" }} />}
+                  </div>
+                  <DayCell day="" dk={dk} dayData={selected[dk]||{}} dayMeta={meta[dk]||{}} isWeekend={dow>=5} onClick={()=>setModal(dk)} size="medium" isToday={isToday} blink={blink} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Summary panels */}
+      <div style={{ maxWidth:1100, margin:"0 auto" }}>
+
+        {/* Cómputo */}
+        <div style={{ ...card, padding:"18px 20px", marginBottom:10 }}>
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:10, color:"#94A3B8", letterSpacing:3, textTransform:"uppercase" }}>Cómputo total {year}</div>
+            <div style={{ fontSize:24, fontWeight:900, color:"#0F172A", marginTop:3 }}>{stats.totalConsumido}<span style={{ fontSize:13,color:"#94A3B8",fontWeight:400 }}> / {OBJETIVO_JORNADAS} jornadas</span></div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:8, marginBottom:14 }}>
+            {[
+              { label:"💼 Jornadas trabajadas", dias:stats.diasTrabajo, jornadas:stats.jornadasTrabajadas, t:TIPOS[0] },
+              { label:"🏖️ Vacaciones (trabajo)", dias:stats.diasVacaciones, jornadas:stats.jornadasVacaciones, t:TIPOS[1] },
+            ].map(item=>(
+              <div key={item.label} style={{ background:item.jornadas>0?item.t.bg:"#F8FAFC",borderRadius:12,padding:"12px 14px",border:`1.5px solid ${item.jornadas>0?item.t.border:"#E2E8F0"}` }}>
+                <div style={{ fontSize:11,color:item.jornadas>0?item.t.text:"#94A3B8",fontWeight:700,marginBottom:4 }}>{item.label}</div>
+                <div style={{ fontSize:22,fontWeight:900,color:item.jornadas>0?item.t.color:"#CBD5E1" }}>{item.jornadas}<span style={{ fontSize:11,color:"#94A3B8",fontWeight:400 }}>j</span></div>
+                <div style={{ fontSize:10,color:"#94A3B8" }}>{item.dias} día{item.dias!==1?"s":""} × 3</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:"flex",justifyContent:"space-between",marginBottom:5 }}>
+            <span style={{ fontSize:11,color:"#94A3B8" }}>Progreso anual</span>
+            <span style={{ fontSize:11,fontWeight:800,color:stats.excesoBruto>0?"#DC2626":pct>=100?"#16A34A":"#2563EB" }}>{pct.toFixed(1)}%</span>
+          </div>
+          <div style={{ height:10,background:"#F1F5F9",borderRadius:10,overflow:"hidden",display:"flex" }}>
+            <div style={{ width:`${Math.min(100,(stats.jornadasTrabajadas/OBJETIVO_JORNADAS)*100)}%`,background:"#DC2626",transition:"width 0.4s" }} />
+            <div style={{ width:`${Math.min(100-(stats.jornadasTrabajadas/OBJETIVO_JORNADAS)*100,(stats.jornadasVacaciones/OBJETIVO_JORNADAS)*100)}%`,background:"#CA8A04",transition:"width 0.4s" }} />
+          </div>
+        </div>
+
+        {/* Excesos */}
+        <div style={{ ...card, padding:"18px 20px", marginBottom:10, background:stats.excesoBruto>0?"#ECFEFF":"#fff", border:`1px solid ${stats.excesoBruto>0?"#A5F3FC":"#E2E8F0"}` }}>
+          <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:14 }}>
+            <span style={{ fontSize:22 }}>⏱️</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14,fontWeight:800,color:"#164E63" }}>Excesos de Jornadas</div>
+              <div style={{ fontSize:11,color:"#94A3B8" }}>Solo se acumulan de días trabajados · 8h = 1 jornada compensada</div>
+            </div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:8, marginBottom:stats.excesosDias.length>0?12:0 }}>
+            {[
+              { label:"Excesos acumulados", value:stats.excesoBruto, unit:"jornadas (solo trabajo)", color:stats.excesoBruto>0?"#DC2626":"#94A3B8", bg:stats.excesoBruto>0?"#FEF2F2":"#F8FAFC", border:stats.excesoBruto>0?"#FECACA":"#E2E8F0" },
+              { label:"Excesos compensados", value:stats.excesosUsados, unit:`jornadas (${stats.horasExcesos}h)`, color:"#0891B2", bg:"#ECFEFF", border:"#A5F3FC" },
+              { label:"Exceso neto pendiente", value:stats.excesoNeto, unit:"jornadas", color:stats.excesoNeto>0?"#EA580C":"#16A34A", bg:stats.excesoNeto>0?"#FFF7ED":"#F0FDF4", border:stats.excesoNeto>0?"#FED7AA":"#86EFAC" },
+            ].map(item=>(
+              <div key={item.label} style={{ background:item.bg,borderRadius:12,padding:"12px 14px",border:`1.5px solid ${item.border}` }}>
+                <div style={{ fontSize:10,color:item.color,fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:4 }}>{item.label}</div>
+                <div style={{ fontSize:24,fontWeight:900,color:item.color,lineHeight:1.1 }}>{item.value}</div>
+                <div style={{ fontSize:10,color:"#94A3B8",marginTop:2 }}>{item.unit}</div>
+              </div>
+            ))}
+          </div>
+          {stats.excesosDias.length>0&&(
+            <div style={{ background:"#F0FDFA",borderRadius:10,padding:"10px 12px",border:"1px solid #A5F3FC" }}>
+              <div style={{ fontSize:10,color:"#0891B2",letterSpacing:2,textTransform:"uppercase",marginBottom:6,fontWeight:700 }}>Días de compensación</div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                {stats.excesosDias.map(dk=>{const {m}=parseKey(dk);const hr=meta[dk]?.horario?.excesos||{};return(<span key={dk} onClick={()=>{setViewMonth(m);setView("monthly");}} style={{background:"#fff",border:"1px solid #A5F3FC",borderRadius:7,padding:"3px 10px",fontSize:11,color:"#164E63",fontWeight:700,cursor:"pointer"}}>{formatDate(dk)} · {selected[dk]?.excesos||0}h{hr.from?` · ${hr.from}-${hr.to||"?"}`:""}</span>);})}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Asuntos propios */}
+        <div style={{ ...card, padding:"18px 20px", marginBottom:10 }}>
+          <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:14 }}>
+            <span style={{ fontSize:22 }}>📋</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14,fontWeight:800,color:"#4C1D95" }}>Asuntos Propios</div>
+              <div style={{ fontSize:11,color:"#94A3B8" }}>8h = 1 asunto · {ASUNTOS_TOTAL} disponibles · No cuentan como jornadas</div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:22,fontWeight:900,color:stats.asuntosRestantes>0?"#7C3AED":"#DC2626" }}>{stats.asuntosRestantes}</div>
+              <div style={{ fontSize:10,color:"#94A3B8" }}>restantes</div>
+            </div>
+          </div>
+          <div style={{ display:"flex",gap:6,marginBottom:12,flexWrap:"wrap" }}>
+            {Array.from({length:ASUNTOS_TOTAL},(_, i)=>{
+              const usado=i<stats.asuntosUsados;
+              return <div key={i} style={{ width:36,height:36,borderRadius:8,background:usado?"#7C3AED":"#F5F3FF",border:`1.5px solid ${usado?"#7C3AED":"#DDD6FE"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:usado?14:11,color:usado?"#fff":"#C4B5FD",fontWeight:700,boxShadow:usado?"0 2px 8px rgba(124,58,237,0.3)":"none" }}>{usado?"✓":i+1}</div>;
+            })}
+          </div>
+          {stats.asuntosDias.length>0&&(
+            <div style={{ background:"#F5F3FF",borderRadius:10,padding:"10px 12px" }}>
+              <div style={{ fontSize:10,color:"#7C3AED",letterSpacing:2,textTransform:"uppercase",marginBottom:6,fontWeight:700 }}>Días utilizados</div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                {stats.asuntosDias.map(dk=>{const {m}=parseKey(dk);const hr=meta[dk]?.horario?.asuntos||{};return(<span key={dk} onClick={()=>{setViewMonth(m);setView("monthly");}} style={{background:"#fff",border:"1px solid #DDD6FE",borderRadius:7,padding:"3px 10px",fontSize:11,color:"#6D28D9",fontWeight:700,cursor:"pointer"}}>{formatDate(dk)} · {selected[dk]?.asuntos||0}h{hr.from?` · ${hr.from}-${hr.to||"?"}`:""}</span>);})}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Sindicales */}
+        <div style={{ ...card, padding:"18px 20px", marginBottom:10 }}>
+          <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:14 }}>
+            <span style={{ fontSize:22 }}>✊</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14,fontWeight:800,color:"#581C87" }}>Días Sindicales</div>
+              <div style={{ fontSize:11,color:"#94A3B8" }}>Crédito máximo: {SINDICAL_MAX_MES}h / mes · {Object.values(stats.sindicalPorMes).reduce((a,m)=>a+m.horas,0)}h usadas en total</div>
+            </div>
+            {Object.entries(stats.sindicalPorMes).some(([,m])=>m.horas>SINDICAL_MAX_MES)&&<div style={{ background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"4px 10px",fontSize:11,color:"#DC2626",fontWeight:700 }}>⚠️ Mes excedido</div>}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(118px, 1fr))", gap:8 }}>
+            {MESES.map((mes,mi)=>{
+              const {horas,dias}=stats.sindicalPorMes[mi];
+              const pctMes=Math.min(100,(horas/SINDICAL_MAX_MES)*100);
+              const exc=horas>SINDICAL_MAX_MES;
+              if(horas===0) return <div key={mi} style={{ background:"#F8FAFC",borderRadius:10,padding:"10px 12px",border:"1px solid #E2E8F0" }}><div style={{ fontSize:10,color:"#CBD5E1",fontWeight:700,marginBottom:2 }}>{mes}</div><div style={{ fontSize:11,color:"#E2E8F0" }}>0/{SINDICAL_MAX_MES}h</div></div>;
+              return (
+                <div key={mi} style={{ background:exc?"#FEF2F2":"#FAF5FF",borderRadius:10,padding:"10px 12px",border:`1px solid ${exc?"#FECACA":"#DDD6FE"}` }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:4 }}>
+                    <span style={{ fontSize:10,fontWeight:800,color:exc?"#991B1B":"#581C87" }}>{mes}</span>
+                    {exc&&<span style={{ fontSize:9,color:"#DC2626",fontWeight:700 }}>+{horas-SINDICAL_MAX_MES}h</span>}
+                  </div>
+                  <div style={{ height:4,background:exc?"#FECACA":"#DDD6FE",borderRadius:3,overflow:"hidden",marginBottom:4 }}>
+                    <div style={{ width:`${pctMes}%`,height:"100%",background:exc?"#DC2626":"#7C3AED",borderRadius:3 }} />
+                  </div>
+                  <div style={{ fontSize:13,fontWeight:900,color:exc?"#DC2626":"#7C3AED",marginBottom:4 }}>{horas}h<span style={{ fontSize:9,color:"#94A3B8",fontWeight:400 }}>/{SINDICAL_MAX_MES}h</span></div>
+                  <div style={{ display:"flex",flexWrap:"wrap",gap:3 }}>
+                    {dias.map(({dk,horas:h})=>{const hm=parseKey(dk).m;const hr=meta[dk]?.horario?.sindical||{};return(<span key={dk} onClick={()=>{setViewMonth(hm);setView("monthly");}} style={{background:exc?"#FEE2E2":"#F5F3FF",border:`1px solid ${exc?"#FECACA":"#DDD6FE"}`,borderRadius:4,padding:"2px 5px",fontSize:9,color:exc?"#991B1B":"#6D28D9",fontWeight:700,cursor:"pointer"}}>{formatDate(dk)}·{h}h{hr.from?` ${hr.from}-${hr.to||"?"}`:""}</span>);})}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+
+        {/* Registro otros tipos */}
+        {["guardia","refuerzo","permiso","baja","festivo"].map(id => {
+          const t = TIPOS.find(x => x.id === id);
+          const dias = stats.tiposDias[id] || [];
+          const totalH = dias.reduce((a, x) => a + x.horas, 0);
+          if (!t) return null;
+          return (
+            <div key={id} style={{ ...card, padding:"16px 20px", marginBottom:10 }}>
+              <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:totalH>0?12:0 }}>
+                <span style={{ fontSize:20 }}>{t.emoji}</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14,fontWeight:800,color:t.text }}>{t.label}</div>
+                  <div style={{ fontSize:11,color:"#94A3B8" }}>{totalH>0?`${totalH}h usadas · ${dias.length} día${dias.length!==1?"s":""})`:"Sin días registrados"}</div>
+                </div>
+                {totalH>0&&<div style={{ fontSize:20,fontWeight:900,color:t.color }}>{totalH}h</div>}
+              </div>
+              {totalH>0&&(
+                <div style={{ background:t.bg,borderRadius:10,padding:"10px 12px",border:`1px solid ${t.border}` }}>
+                  <div style={{ fontSize:10,color:t.text,letterSpacing:2,textTransform:"uppercase",marginBottom:7,fontWeight:700 }}>Días registrados</div>
+                  <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                    {dias.sort((a,b)=>a.dk.localeCompare(b.dk)).map(({dk,horas:h})=>(
+                      <span key={dk} onClick={()=>{const {m}=parseKey(dk);setViewMonth(m);setView("monthly");}} style={{ background:"#fff",border:`1px solid ${t.border}`,borderRadius:7,padding:"3px 10px",fontSize:11,color:t.text,fontWeight:700,cursor:"pointer" }}>
+                        {formatDate(dk)} · {h}h{meta[dk]?.horario?.[id]?.from?` · ${meta[dk].horario[id].from}-${meta[dk].horario[id].to||"?"}`:""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+      </div>
+
+      <div style={{ textAlign:"center",marginTop:12,color:"#CBD5E1",fontSize:10 }}>
+        Toca el mes → vista mensual · Toca un día → vista semanal · El punto azul 🔵 indica hoy
+      </div>
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<CuadranteAnual />);
+  </script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>
